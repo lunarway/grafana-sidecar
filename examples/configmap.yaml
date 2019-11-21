@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    app: grafana
+  name: grafana-config
+data:
+  grafana.ini: |+
+    [security]
+    admin_user     = root
+    admin_password = secret
+
+    [auth]
+    disable_login_form   = false
+    disable_signout_menu = true
+
+    [auth.basic]
+    enabled = true
+
+    [auth.anonymous]
+    enabled = true
+
+    [log]
+    mode  = console
+    level = warn
+
+    [paths]
+    data         = /var/lib/grafana
+    logs         = /var/log/grafana
+    plugins      = /var/lib/grafana/plugins
+    provisioning = /etc/grafana/provisioning
+
+    [server]
+
+    [database]
+
+    [remote_cache]
+
+    [users]
+
+    [auth.google]
+
+    [auth.github]
+
+    [auth.generic_oauth]
+
+    [auth.ldap]
+
+    [auth.proxy]
+
+    [dataproxy]
+
+    [analytics]
+
+    [dashboards]
+
+    [smtp]
+
+    [metrics]
+
+    [metrics.graphite]
+
+    [snapshots]
+
+    [external_image_storage]
+
+    [external_image_storage.s3]
+
+    [external_image_storage.webdav]
+
+    [external_image_storage.gcs]
+
+    [external_image_storage.azure_blob]
+
+    [alerting]
+
+    [panels]
+
+    [plugins]

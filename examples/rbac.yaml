@@ -1,0 +1,29 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: grafana-sidecar
+rules:
+  - apiGroups:
+      - lunarway.com
+    resources:
+      - grafanadashboards
+      - grafanadashboards/finalizers
+    verbs: ["get", "list", "update", "watch"]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana-sidecar
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: grafana-sidecar
+roleRef:
+  name: grafana-sidecar
+  kind: ClusterRole
+  apiGroup: ""
+subjects:
+  - kind: ServiceAccount
+    name: grafana-sidecar
+    namespace: default

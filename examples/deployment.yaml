@@ -1,0 +1,53 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    app: grafana
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: grafana
+      name: grafana
+    spec:
+      serviceAccountName: grafana-sidecar
+      containers:
+        - image: grafana/grafana:6.4.4
+          imagePullPolicy: IfNotPresent
+          name: grafana
+          resources: {}
+          volumeMounts:
+            - mountPath: /etc/grafana/grafana.ini
+              name: grafana-config
+              subPath: 'grafana.ini'
+            - name: grafana
+              mountPath: /etc/grafana
+        - image: grafana-sidecar:v1.0.0
+          imagePullPolicy: IfNotPresent
+          name: grafana-sidecar
+          resources: {}
+          args:
+            - 'watch'
+            - '--grafana-basic-auth=root:secret'
+          volumeMounts:
+            - name: grafana
+              mountPath: /etc/grafana
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      volumes:
+        - name: grafana
+          emptyDir: {}
+        - configMap:
+            defaultMode: 420
+            name: grafana-config
+          name: grafana-config

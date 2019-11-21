@@ -1,0 +1,9 @@
+apiVersion: lunarway.com/v1alpha1
+kind: GrafanaDashboard
+metadata:
+  name: beta-service-board
+spec:
+  name: beta-service-board
+  json: |
+    {"title": "Beta Service Board"}
+  folderTitle: Team Beta
