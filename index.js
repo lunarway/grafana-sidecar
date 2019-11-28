@@ -8,20 +8,22 @@ const path = require('path')
 const bunyan = require('bunyan')
 const yargs = require('yargs')
 const axios = require('axios')
+const debounce = require('debounce')
+const { Policy, ConsecutiveBreaker, BrokenCircuitError, CircuitState } = require('cockatiel')
 
 const log = bunyan.createLogger({ name: 'grafana-sidecar' })
 
-/* TODO:
-- Read command line arguments
-  - path to grafana
-  - path to provider file
-  - path to dashboards
-  - grafana server for API
-  - grafana API key / basic auth
-- make grafana update providers using API
-*/
-
 async function main(settings) {
+  process.on('SIGTERM', () => {
+    log.info('Got SIGTERM. Shutting down')
+    process.exit(0)
+  })
+
+  process.on('SIGINT', () => {
+    log.info('Got SIGINT. Shutting down')
+    process.exit(0)
+  })
+
   while (true) {
     try {
       log.info('Starting grafana-sidecar')
@@ -29,7 +31,9 @@ async function main(settings) {
       // kubeconfig.loadFromCluster()
       // const backend = new Request({ kubeconfig })
       // const client = new Client({ backend })
-      const backend = new Request(Request.config.getInCluster())
+
+      const backend = new Request(settings.kubeconfig ? Request.config.fromKubeconfig(settings.kubeconfig) : Request.config.getInCluster())
+
       const client = new Client({ backend })
       await client.loadSpec()
 
@@ -37,30 +41,17 @@ async function main(settings) {
       const crd = yaml.safeLoad(fs.readFileSync('./deploy/crd.yaml', 'utf8'))
       client.addCustomResourceDefinition(crd)
 
-      const allDashboardsRequest = await client.apis[
-        'lunarway.com'
-      ].v1alpha1.grafanadashboards.get()
-      const allDashboards = allDashboardsRequest.body.items.reduce(
-        (result, dashboard) => {
-          result[
-            `${dashboard.metadata.namespace}#${dashboard.metadata.name}`
-          ] = dashboard
-          return result
-        },
-        {}
-      )
+      const allDashboardsRequest = await client.apis['lunarway.com'].v1alpha1.grafanadashboards.get()
+      const allDashboards = allDashboardsRequest.body.items.reduce((result, dashboard) => {
+        result[`${dashboard.metadata.namespace}#${dashboard.metadata.name}`] = dashboard
+        return result
+      }, {})
 
-      await Promise.all(
-        Object.values(allDashboards).map(d =>
-          updateDashboardConfig(d, settings)
-        )
-      )
+      await Promise.all(Object.values(allDashboards).map(d => updateDashboardConfig(d, settings)))
       await updateProviderConfig(allDashboards, settings)
       await reloadProviderConfig(settings)
 
-      const stream = await client.apis[
-        'lunarway.com'
-      ].v1alpha1.watch.grafanadashboards.getObjectStream()
+      const stream = await client.apis['lunarway.com'].v1alpha1.watch.grafanadashboards.getObjectStream()
 
       await new Promise(a =>
         stream
@@ -68,22 +59,16 @@ async function main(settings) {
             try {
               if (event.type === 'ADDED' || event.type === 'MODIFIED') {
                 const dashboard = event.object
-                allDashboards[
-                  `${dashboard.metadata.namespace}#${dashboard.metadata.name}`
-                ] = dashboard
+                allDashboards[`${dashboard.metadata.namespace}#${dashboard.metadata.name}`] = dashboard
                 await updateDashboardConfig(dashboard, settings)
                 await updateProviderConfig(allDashboards, settings)
                 await reloadProviderConfig(settings)
                 return
               } else if (event.type === 'DELETED') {
                 const dashboard = event.object
-                delete allDashboards[
-                  `${dashboard.metadata.namespace}#${dashboard.metadata.name}`
-                ]
+                delete allDashboards[`${dashboard.metadata.namespace}#${dashboard.metadata.name}`]
                 await deleteDashboardConfig(dashboard, settings)
-                log.info(
-                  'wait more than 10s to delete provider, so grafana can cleanup first'
-                )
+                log.info('wait more than 10s to delete provider, so grafana can cleanup first')
                 await new Promise(a => setTimeout(a, 11000))
                 await updateProviderConfig(allDashboards, settings)
                 await reloadProviderConfig(settings)
@@ -108,24 +93,21 @@ async function main(settings) {
 }
 
 async function updateProviderConfig(allDashboards, settings) {
-  const providers = Object.values(allDashboards).reduce(
-    (providers, dashboard) => {
-      const folderData = getFolderData(dashboard.spec.folderTitle, settings)
-      providers[folderData.grafanaUid] = {
-        name: folderData.folderTitle,
-        orgId: 1,
-        folder: folderData.grafanaFolder,
-        folderUid: folderData.grafanaUid,
-        type: 'file',
-        updateIntervalSeconds: 10,
-        options: {
-          path: folderData.folderPath,
-        },
-      }
-      return providers
-    },
-    {}
-  )
+  const providers = Object.values(allDashboards).reduce((providers, dashboard) => {
+    const folderData = getFolderData(dashboard.spec.folderTitle, settings)
+    providers[folderData.grafanaUid] = {
+      name: folderData.folderTitle,
+      orgId: 1,
+      folder: folderData.grafanaFolder,
+      folderUid: folderData.grafanaUid,
+      type: 'file',
+      updateIntervalSeconds: 10,
+      options: {
+        path: folderData.folderPath,
+      },
+    }
+    return providers
+  }, {})
 
   fs.mkdirSync(path.dirname(settings.providerPath), { recursive: true })
   fs.writeFileSync(
@@ -139,7 +121,12 @@ async function updateProviderConfig(allDashboards, settings) {
   log.info('updated provider at %s', settings.providerPath)
 }
 
-async function reloadProviderConfig(settings) {
+const authBreaker = Policy.handleWhen(err => err.response && err.response.data && err.response.data.message === 'Invalid username or password').circuitBreaker(
+  6 * 60 * 1000,
+  new ConsecutiveBreaker(2)
+)
+
+const reloadProviderConfig = debounce(async settings => {
   const req = {
     baseURL: settings.grafanaApi,
     url: '/api/admin/provisioning/dashboards/reload',
@@ -156,38 +143,32 @@ async function reloadProviderConfig(settings) {
     // nothing
   }
   try {
-    await axios.request(req)
+    await authBreaker.execute(() => axios.request(req))
   } catch (err) {
-    log.error(err, 'failed reloading providers')
+    if (err instanceof BrokenCircuitError) {
+      log.info(err, 'Skipping provider reloading, because circuit breaker is open')
+    } else if (err.response && err.response.data && err.response.data.message) {
+      log.error(err, `failed reloading providers with message: ${err.response.data.message}`)
+    } else {
+      log.error(err, `failed reloading providers`)
+    }
     return
   }
 
   log.info('reloaded providers')
-}
+}, 1000)
 
 async function updateDashboardConfig(dashboard, settings) {
-  const dashboardFolderData = getFolderData(
-    dashboard.spec.folderTitle,
-    settings
-  )
-  const dashboardPath = path.join(
-    dashboardFolderData.folderPath,
-    `${dashboard.metadata.namespace}_${dashboard.metadata.name}.json`
-  )
+  const dashboardFolderData = getFolderData(dashboard.spec.folderTitle, settings)
+  const dashboardPath = path.join(dashboardFolderData.folderPath, `${dashboard.metadata.namespace}_${dashboard.metadata.name}.json`)
   fs.mkdirSync(path.dirname(dashboardPath), { recursive: true })
   fs.writeFileSync(dashboardPath, dashboard.spec.json)
 
   log.info('updated dashboard at %s', dashboardPath)
 }
 async function deleteDashboardConfig(dashboard, settings) {
-  const dashboardFolderData = getFolderData(
-    dashboard.spec.folderTitle,
-    settings
-  )
-  const dashboardPath = path.join(
-    dashboardFolderData.folderPath,
-    `${dashboard.metadata.namespace}_${dashboard.metadata.name}.json`
-  )
+  const dashboardFolderData = getFolderData(dashboard.spec.folderTitle, settings)
+  const dashboardPath = path.join(dashboardFolderData.folderPath, `${dashboard.metadata.namespace}_${dashboard.metadata.name}.json`)
   fs.unlinkSync(dashboardPath)
 
   log.info('deleted dashboard at %s', dashboardPath)
@@ -196,12 +177,8 @@ async function deleteDashboardConfig(dashboard, settings) {
 function getFolderData(folderTitle, settings) {
   return {
     folderTitle: folderTitle,
-    grafanaFolder:
-      folderTitle === 'General' || folderTitle == '' ? '' : folderTitle,
-    grafanaUid:
-      folderTitle === 'General' || folderTitle == ''
-        ? ''
-        : slugify(folderTitle).substring(0, 40),
+    grafanaFolder: folderTitle === 'General' || folderTitle == '' ? '' : folderTitle,
+    grafanaUid: folderTitle === 'General' || folderTitle == '' ? '' : slugify(folderTitle).substring(0, 40),
     folderPath: `${settings.dashboardDir}/${slugify(folderTitle)}`,
   }
 }
@@ -237,6 +214,10 @@ function startFromArgs() {
             describe: 'use grafana token for API calls',
             default: '',
           })
+          .option('kubeconfig', {
+            describe: 'select a kubeconfig to use',
+            default: null,
+          })
       },
       argv => {
         if (argv.verbose) {
@@ -258,6 +239,7 @@ function startFromArgs() {
                 password: argv['grafana-basic-auth'].split(':')[1],
               }
             : { type: 'anonymous' },
+          kubeconfig: argv.kubeconfig,
         })
       }
     )
