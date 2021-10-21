@@ -10,34 +10,33 @@ spec:
     plural: grafanadashboards
     singular: grafanadashboard
   scope: Namespaced
-  subresources:
-    status: {}
-  validation:
-    openAPIV3Schema:
-      description: GrafanaDashboard is the Schema for the grafanadashboards API
-      properties:
-        apiVersion:
-          type: string
-        kind:
-          type: string
-        metadata:
-          type: object
-        spec:
-          description: GrafanaDashboardSpec defines the desired state of GrafanaDashboard
-          properties:
-            folderTitle:
-              type: string
-            json:
-              type: string
-            name:
-              type: string
-          required:
-            - json
-            - name
-          type: object
-      type: object
-  version: v1alpha1
   versions:
     - name: v1alpha1
       served: true
       storage: true
+      schema:
+        openAPIV3Schema:
+          description: GrafanaDashboard is the Schema for the grafanadashboards API
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: GrafanaDashboardSpec defines the desired state of GrafanaDashboard
+              properties:
+                folderTitle:
+                  type: string
+                json:
+                  type: string
+                name:
+                  type: string
+              required:
+                - json
+                - name
+              type: object
+          type: object
+      subresources:
+        status: {}
