@@ -10,7 +10,7 @@
   "license": "ISC",
   "dependencies": {
     "@kubernetes/client-node": "^0.11.0",
-    "axios": "^0.19.0",
+    "axios": "^0.26.1",
     "bunyan": "^1.8.12",
     "cockatiel": "^0.1.0",
     "debounce": "^1.2.0",
