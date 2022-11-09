@@ -1,0 +1,6 @@
+plan: false
+
+vars:
+  service: grafana-sidecar
+  squad: odyssey
+  domain: platform-observability
