@@ -1,4 +1,4 @@
-FROM node:13.1.0-alpine
+FROM node:13.14.0-alpine
 
 COPY package.json package-lock.json ./
 RUN npm install .
