@@ -4,3 +4,4 @@ vars:
   service: grafana-sidecar
   squad: odyssey
   domain: platform-observability
+  system: grafana
