@@ -1,4 +1,4 @@
-FROM node:20.5.1-alpine
+FROM node:20.6.0-alpine
 
 COPY package.json package-lock.json ./
 RUN npm install .
