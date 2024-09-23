@@ -9,7 +9,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@kubernetes/client-node": "^0.21.0",
+    "@kubernetes/client-node": "^0.22.0",
     "axios": "^0.28.0",
     "bunyan": "^1.8.12",
     "cockatiel": "^0.1.0",
